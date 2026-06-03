@@ -28,7 +28,7 @@ from app.config import Config
 
 def create_pool(config: Config) -> AsyncConnectionPool:
     # open=False: the pool is opened in the app lifespan, not at import time.
-    return AsyncConnectionPool(config.database_url, open=False)
+    return AsyncConnectionPool(config.database_url, open=False, kwargs={"autocommit": True})
 
 
 async def get_connection(pool: AsyncConnectionPool) -> AsyncGenerator[AsyncConnection, None]:

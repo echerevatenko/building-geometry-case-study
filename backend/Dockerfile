@@ -16,6 +16,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY app/ ./app/
 RUN uv sync --frozen --no-dev
 
+# Raw-SQL migrations applied at startup (resolved relative to app/, i.e. /app/migrations)
+COPY migrations/ ./migrations/
+
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-dev", "--no-sync", "uvicorn", "app.server:deploy_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Apply pending migrations, then start the server. Migrations run once before
+# the uvicorn workers fork; yoyo takes its own lock so multiple replicas stay safe.
+CMD ["sh", "-c", "uv run --no-dev --no-sync app migrate apply && exec uv run --no-dev --no-sync uvicorn app.server:deploy_factory --factory --host 0.0.0.0 --port 8000 --workers 2"]
