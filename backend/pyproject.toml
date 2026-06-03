@@ -12,6 +12,7 @@ dependencies = [
     "loguru>=0.7",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    "yoyo-migrations>=9.0.0",
 ]
 
 [build-system]
@@ -33,6 +34,7 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.380",
     "pre-commit>=3.5",
+    "testcontainers>=4.0",
 ]
 
 [tool.ruff]
