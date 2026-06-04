@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { button, colors, deleteButton, input, label } from "../styles.js";
 
 // Parse pasted text into an ordered array of [x, y] points, or throw a helpful error.
@@ -24,6 +24,17 @@ function parsePoints(text) {
 export default function CoordinateEditor({ title, coords, onChange }) {
   const [raw, setRaw] = useState("");
   const [error, setError] = useState(null);
+  // True while the user is typing in the JSON box, so we don't overwrite it.
+  const [editingRaw, setEditingRaw] = useState(false);
+
+  // Keep the JSON box in sync with the points whenever they change elsewhere
+  // (per-point inputs, paste, the parent) — but never while it's being typed in.
+  useEffect(() => {
+    if (!editingRaw) {
+      setRaw(coords.length ? JSON.stringify(coords) : "");
+      setError(null);
+    }
+  }, [coords, editingRaw]);
 
   const setPoint = (i, axis, value) => {
     const next = coords.map((p) => [...p]);
@@ -34,9 +45,17 @@ export default function CoordinateEditor({ title, coords, onChange }) {
   const addPoint = () => onChange([...coords, [0, 0]]);
   const removePoint = (i) => onChange(coords.filter((_, idx) => idx !== i));
 
-  const applyPaste = () => {
+  // Apply pasted coordinates live: valid JSON replaces the points immediately, so
+  // there's nothing to "apply" before saving. Invalid text just shows an error and
+  // leaves the current points untouched; clearing the box leaves them alone too.
+  const onPaste = (text) => {
+    setRaw(text);
+    if (!text.trim()) {
+      setError(null);
+      return;
+    }
     try {
-      onChange(parsePoints(raw));
+      onChange(parsePoints(text));
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -57,20 +76,14 @@ export default function CoordinateEditor({ title, coords, onChange }) {
             fontFamily: "ui-monospace, monospace",
             resize: "vertical",
           }}
-          placeholder="Paste points, e.g. [[0,0],[10,0],[10,5],[0,5]]"
+          placeholder="Paste points, e.g. [[0,0],[10,0],[10,5],[0,5]] — applied as you paste"
           value={raw}
-          onChange={(e) => setRaw(e.target.value)}
+          onChange={(e) => onPaste(e.target.value)}
+          onFocus={() => setEditingRaw(true)}
+          onBlur={() => setEditingRaw(false)}
           aria-label={`${title} paste coordinates`}
         />
-        <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.3rem", flexWrap: "wrap" }}>
-          <button style={button} onClick={applyPaste} disabled={!raw.trim()}>
-            Apply pasted
-          </button>
-          <button style={button} onClick={() => setRaw(JSON.stringify(coords))} title="Load the current points to edit">
-            Load current
-          </button>
-          {error && <span style={{ fontSize: "0.75rem", color: colors.danger }}>{error}</span>}
-        </div>
+        {error && <div style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: colors.danger }}>{error}</div>}
       </div>
 
       {coords.length === 0 && <p style={{ margin: "0 0 0.4rem", fontSize: "0.8rem", color: "#888" }}>No points yet.</p>}

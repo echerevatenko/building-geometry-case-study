@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { createPolygon, listPolygons } from "./api.js";
+import { listPolygons } from "./api.js";
 import { card, colors } from "./styles.js";
 import PolygonsList from "./components/PolygonsList.jsx";
 import Polygon from "./components/Polygon.jsx";
+import Scene from "./components/Scene.jsx";
 import ConfirmDialog from "./components/ConfirmDialog.jsx";
 import { useToast } from "./components/toastContext.js";
+
+// A new polygon is an unsaved client-side draft until the user hits Save; it
+// carries this sentinel id and is never sent to the backend until then.
+const DRAFT_ID = "draft";
+// A draft starts with no coordinates — the user enters the site polygon themselves.
+const EMPTY_SITE = { coordinates: [] };
 
 export default function App() {
   const notify = useToast();
@@ -14,6 +21,11 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   // A navigation action awaiting confirmation because of unsaved edits; null when idle.
   const [pendingNav, setPendingNav] = useState(null);
+  // The massing option whose footprint is shown on the canvas: { id, footprint }.
+  // The footprint comes from the last Generate preview (it isn't persisted).
+  const [active, setActive] = useState(null);
+  // The unsaved new polygon, if any (id === DRAFT_ID). Persisted only on Save.
+  const [draft, setDraft] = useState(null);
   // Width of the side panel in px; dragged via the divider between canvas and panel.
   const [asideWidth, setAsideWidth] = useState(400);
 
@@ -42,14 +54,21 @@ export default function App() {
     loadPolygons().catch((err) => notify(err.message));
   }, [loadPolygons, notify]);
 
-  const addPolygon = async () => {
-    try {
-      const created = await createPolygon({ title: "Untitled polygon" });
-      await loadPolygons();
-      setSelectedId(created.id);
-    } catch (err) {
-      notify(err.message);
-    }
+  // Adding a polygon creates only a local draft — nothing is sent to the backend
+  // until the user saves it. It starts blank; the user enters the coordinates.
+  const addPolygon = () => {
+    setDraft({
+      id: DRAFT_ID,
+      title: "Untitled polygon",
+      site_polygon: EMPTY_SITE,
+      buildable_base: null,
+      geometry_status: null,
+      geometry_reason: null,
+      is_deleted: false,
+      created_at: null,
+      updated_at: null,
+    });
+    setSelectedId(DRAFT_ID);
   };
 
   // Run a navigation now; the freshly mounted editor will re-report its own dirty state.
@@ -60,15 +79,30 @@ export default function App() {
   // Navigate, but if the current editor has unsaved edits, confirm the discard first.
   const guardedNav = (action) => (dirty ? setPendingNav(() => action) : runNav(action));
 
-  // After a save, keep the selection but refresh the list (titles, polygons).
-  const onPolygonSaved = () => loadPolygons();
+  // After a save, refresh the list. If a draft was just created, select the real
+  // row (which clears the draft via the effect below).
+  const onPolygonSaved = async (saved) => {
+    await loadPolygons();
+    if (selectedId === DRAFT_ID) setSelectedId(saved?.id ?? null);
+  };
   const onPolygonDeleted = async () => {
+    setDraft(null);
     await loadPolygons();
     setDirty(false);
     setSelectedId(null);
   };
 
-  const selected = polygons.find((p) => p.id === selectedId) ?? null;
+  // The draft (if any) shows at the top of the list alongside saved polygons.
+  const listed = draft ? [draft, ...polygons] : polygons;
+  const selected = listed.find((p) => p.id === selectedId) ?? null;
+  // The shown footprint belongs to the selected polygon; drop it when navigating away.
+  useEffect(() => {
+    setActive(null);
+  }, [selectedId]);
+  // Leaving the draft (saved, deleted, or navigated away) discards it.
+  useEffect(() => {
+    if (selectedId !== DRAFT_ID) setDraft(null);
+  }, [selectedId]);
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", height: "100vh", display: "flex", overflow: "hidden" }}>
@@ -78,16 +112,18 @@ export default function App() {
         <div
           style={{
             flex: 1,
-            border: `2px dashed ${colors.borderStrong}`,
+            border: `1px solid ${colors.border}`,
             borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#888",
+            overflow: "hidden",
+            minHeight: 0,
           }}
         >
-          {/* TODO(candidate): polygon visualization renders here. */}
-          Canvas — visualization goes here.
+          <Scene
+            site={selected?.site_polygon ?? null}
+            base={selected?.buildable_base ?? null}
+            footprint={active?.footprint ?? null}
+            height={active?.height ?? null}
+          />
         </div>
       </section>
 
@@ -111,7 +147,7 @@ export default function App() {
         }}
       >
         <PolygonsList
-          polygons={polygons}
+          polygons={listed}
           selectedId={selectedId}
           onSelect={(id) => id !== selectedId && guardedNav(() => setSelectedId(id))}
           onAdd={() => guardedNav(addPolygon)}
@@ -125,6 +161,8 @@ export default function App() {
               onSaved={onPolygonSaved}
               onDeleted={onPolygonDeleted}
               onDirtyChange={setDirty}
+              activeOptionId={active?.id ?? null}
+              onActivate={(id, massing) => setActive(id == null ? null : { id, ...massing })}
             />
           </div>
         ) : (

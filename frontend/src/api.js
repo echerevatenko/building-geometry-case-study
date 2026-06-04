@@ -34,4 +34,10 @@ export const createMassingOption = (payload) =>
 export const updateMassingOption = (id, payload) =>
   request(`/massing-options/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 export const deleteMassingOption = (id) => request(`/massing-options/${id}`, { method: "DELETE" });
-export const generateMassingOption = (id) => request(`/massing-options/${id}/generate`, { method: "POST" });
+// Preview a massing with the given (possibly unsaved) constraints; the backend
+// computes without persisting. Omit `constraints` to use the option's saved ones.
+export const generateMassingOption = (id, constraints) =>
+  request(`/massing-options/${id}/generate`, {
+    method: "POST",
+    body: JSON.stringify(constraints ? { constraints } : {}),
+  });

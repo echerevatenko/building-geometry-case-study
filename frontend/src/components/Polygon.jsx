@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createMassingOption, deletePolygon, listPolygonMassingOptions, updatePolygon } from "../api.js";
+import { createMassingOption, createPolygon, deletePolygon, listPolygonMassingOptions, updatePolygon } from "../api.js";
 import { button, card, colors, deleteButton, editNameButton, input, label, saveButton } from "../styles.js";
 import CoordinateEditor from "./CoordinateEditor.jsx";
 import MassingOptionsTree from "./MassingOptionsTree.jsx";
@@ -9,8 +9,10 @@ import { useToast } from "./toastContext.js";
 
 const coordsOf = (polygon) => polygon.site_polygon?.coordinates ?? [];
 
-export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) {
+export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange, activeOptionId, onActivate }) {
   const notify = useToast();
+  // A draft polygon (not yet persisted) has a non-numeric sentinel id.
+  const isNew = typeof polygon.id !== "number";
   const [title, setTitle] = useState(polygon.title);
   // Title reads as plain text; the pencil switches it to an input — same as massing option names.
   const [editingTitle, setEditingTitle] = useState(false);
@@ -32,6 +34,11 @@ export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) 
   }, [polygon.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMassingOptions = useCallback(async () => {
+    // A draft has no backend row yet, so it has no options to load.
+    if (typeof polygon.id !== "number") {
+      setMassingOptions([]);
+      return;
+    }
     setMassingOptions(await listPolygonMassingOptions(polygon.id));
   }, [polygon.id]);
 
@@ -63,16 +70,15 @@ export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) 
 
   const save = () =>
     run("save", async () => {
-      await updatePolygon(polygon.id, {
-        title: title.trim(),
-        site_polygon: { coordinates: coords },
-      });
-      await onSaved();
+      const payload = { title: title.trim(), site_polygon: { coordinates: coords } };
+      // A draft is created on first save; an existing polygon is patched.
+      const saved = isNew ? await createPolygon(payload) : await updatePolygon(polygon.id, payload);
+      await onSaved(saved);
     });
 
   const confirmDelete = () =>
     run("delete", async () => {
-      await deletePolygon(polygon.id);
+      if (!isNew) await deletePolygon(polygon.id); // a draft only needs discarding
       setConfirmOpen(false);
       await onDeleted();
     });
@@ -87,15 +93,20 @@ export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) 
   // to the polygon's own fields (a mid-edit massing option doesn't block adding a sibling).
   const savedCoords = coordsOf(polygon);
   const ownDirty = title.trim() !== polygon.title || JSON.stringify(coords) !== JSON.stringify(savedCoords);
-  const addDisabledReason = ownDirty
-    ? "Save changes before adding massing options"
-    : savedCoords.length === 0
-      ? "Add a site polygon before adding massing options"
-      : null;
+  const addDisabledReason = isNew
+    ? "Save the polygon before adding massing options"
+    : ownDirty
+      ? "Save changes before adding massing options"
+      : savedCoords.length === 0
+        ? "Add a site polygon before adding massing options"
+        : null;
 
   // Unsaved edits anywhere in this editor — the polygon itself or any massing option —
-  // so the parent can guard against discarding them when navigating away.
-  const dirty = ownDirty || dirtyOptionIds.size > 0;
+  // so the parent can guard against discarding them when navigating away. A brand-new
+  // draft is always "dirty" until it has been saved at least once.
+  const dirty = isNew || ownDirty || dirtyOptionIds.size > 0;
+  // A polygon needs at least 3 points before it can be saved.
+  const cannotSave = busy || coords.length < 3;
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -134,11 +145,16 @@ export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) 
       <CoordinateEditor title="Footprint (site polygon)" coords={coords} onChange={setCoords} />
 
       <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
-        <button style={saveButton} disabled={busy} onClick={save}>
+        <button
+          style={{ ...saveButton, ...(cannotSave ? { opacity: 0.45, cursor: "not-allowed" } : {}) }}
+          disabled={cannotSave}
+          onClick={save}
+          title={coords.length < 3 ? "Add at least 3 points to the site polygon first" : undefined}
+        >
           {pending === "save" ? <Spinner /> : "Save"}
         </button>
-        <button style={deleteButton} disabled={busy || !polygon.id} onClick={() => setConfirmOpen(true)}>
-          {pending === "delete" ? <Spinner /> : "Delete"}
+        <button style={deleteButton} disabled={busy} onClick={() => (isNew ? confirmDelete() : setConfirmOpen(true))}>
+          {pending === "delete" ? <Spinner /> : isNew ? "Discard" : "Delete"}
         </button>
       </div>
 
@@ -160,6 +176,8 @@ export default function Polygon({ polygon, onSaved, onDeleted, onDirtyChange }) 
           polygonId={polygon.id}
           onChanged={loadMassingOptions}
           onOptionDirtyChange={handleOptionDirty}
+          activeOptionId={activeOptionId}
+          onActivate={onActivate}
         />
       </div>
 
