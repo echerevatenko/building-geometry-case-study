@@ -13,7 +13,9 @@ from app.repositories._base import UNSET, _Unset
 logger = logging.getLogger(__name__)
 
 # Column list kept in one place so SELECT/RETURNING stay in sync with Polygon.
-_COLUMNS = "id, title, site_polygon, is_deleted, created_at, updated_at"
+_COLUMNS = (
+    "id, title, site_polygon, buildable_base, geometry_status, geometry_reason, is_deleted, created_at, updated_at"
+)
 
 
 class PolygonRepository:
@@ -31,22 +33,31 @@ class PolygonRepository:
         *,
         title: str,
         site_polygon: dict[str, Any] | None = None,
+        buildable_base: dict[str, Any] | None = None,
+        geometry_status: str | None = None,
+        geometry_reason: str | None = None,
     ) -> Polygon:
-        """Insert a new polygon and return the persisted row.
+        """Insert a new polygon (with its derived geometry) and return the row.
 
         The ``jsonb`` columns default to SQL ``NULL`` when omitted; ``dict``
-        values are wrapped in ``Jsonb`` so psycopg adapts them to ``jsonb``.
+        values are wrapped in ``Jsonb`` so psycopg adapts them to ``jsonb``. The
+        derived geometry fields are computed by the caller via ``parse_site``.
         """
         async with self._conn.cursor(row_factory=class_row(Polygon)) as cur:
             await cur.execute(
                 f"""
-                INSERT INTO polygon (title, site_polygon)
-                VALUES (%(title)s, %(site_polygon)s)
+                INSERT INTO polygon (title, site_polygon, buildable_base, geometry_status, geometry_reason)
+                VALUES (
+                    %(title)s, %(site_polygon)s, %(buildable_base)s, %(geometry_status)s, %(geometry_reason)s
+                )
                 RETURNING {_COLUMNS}
                 """,
                 {
                     "title": title,
                     "site_polygon": Jsonb(site_polygon) if site_polygon is not None else None,
+                    "buildable_base": Jsonb(buildable_base) if buildable_base is not None else None,
+                    "geometry_status": geometry_status,
+                    "geometry_reason": geometry_reason,
                 },
             )
             row = await cur.fetchone()
@@ -74,12 +85,18 @@ class PolygonRepository:
         *,
         title: str | _Unset = UNSET,
         site_polygon: dict[str, Any] | None | _Unset = UNSET,
+        buildable_base: dict[str, Any] | None | _Unset = UNSET,
+        geometry_status: str | None | _Unset = UNSET,
+        geometry_reason: str | None | _Unset = UNSET,
     ) -> Polygon | None:
         """Partially update a live polygon.
 
         Only the arguments you pass are written; omit one to leave that column
-        untouched. Passing ``None`` for a ``jsonb`` column clears it. Returns the
-        updated row, or ``None`` if no live polygon matched.
+        untouched. Passing ``None`` for a ``jsonb`` column clears it. The derived
+        geometry columns (``buildable_base`` / ``geometry_status`` /
+        ``geometry_reason``) are computed by the caller via ``parse_site`` and
+        written here whenever ``site_polygon`` changes. Returns the updated row,
+        or ``None`` if no live polygon matched.
         """
         assignments: list[sql.Composable] = []
         params: dict[str, object] = {"id": polygon_id}
@@ -87,9 +104,14 @@ class PolygonRepository:
         if not isinstance(title, _Unset):
             assignments.append(sql.SQL("title = %(title)s"))
             params["title"] = title
-        if not isinstance(site_polygon, _Unset):
-            assignments.append(sql.SQL("site_polygon = %(site_polygon)s"))
-            params["site_polygon"] = Jsonb(site_polygon) if site_polygon is not None else None
+        for column, value in (("geometry_status", geometry_status), ("geometry_reason", geometry_reason)):
+            if not isinstance(value, _Unset):
+                assignments.append(sql.SQL("{} = {}").format(sql.Identifier(column), sql.Placeholder(column)))
+                params[column] = value
+        for column, value in (("site_polygon", site_polygon), ("buildable_base", buildable_base)):
+            if not isinstance(value, _Unset):
+                assignments.append(sql.SQL("{} = {}").format(sql.Identifier(column), sql.Placeholder(column)))
+                params[column] = Jsonb(value) if value is not None else None
 
         if not assignments:
             # Nothing to change; return the current row so callers get a stable shape.
