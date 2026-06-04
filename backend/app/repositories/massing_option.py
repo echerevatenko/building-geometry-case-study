@@ -16,8 +16,6 @@ _COLUMNS = (
 
 
 class MassingOptionRepository:
-    """CRUD-ish access to ``massing_option`` rows over a single connection."""
-
     def __init__(self, conn: AsyncConnection) -> None:
         self._conn = conn
 
@@ -33,6 +31,7 @@ class MassingOptionRepository:
         floor_count: int | None = None,
         footprint_area: float | None = None,
         gfa: float | None = None,
+        verification_result: str | None = None,
     ) -> MassingOption:
         """Insert a new massing option (root if ``parent_id`` is ``None``) and return it.
 
@@ -44,11 +43,11 @@ class MassingOptionRepository:
                 f"""
                 INSERT INTO massing_option (
                     polygon_id, parent_id, name, position, footprint, constraints,
-                    floor_count, footprint_area, gfa
+                    floor_count, footprint_area, gfa, verification_result
                 )
                 VALUES (
                     %(polygon_id)s, %(parent_id)s, %(name)s, %(position)s, %(footprint)s, %(constraints)s,
-                    %(floor_count)s, %(footprint_area)s, %(gfa)s
+                    %(floor_count)s, %(footprint_area)s, %(gfa)s, %(verification_result)s
                 )
                 RETURNING {_COLUMNS}
                 """,
@@ -62,6 +61,7 @@ class MassingOptionRepository:
                     "floor_count": floor_count,
                     "footprint_area": footprint_area,
                     "gfa": gfa,
+                    "verification_result": verification_result,
                 },
             )
             row = await cur.fetchone()
@@ -69,7 +69,6 @@ class MassingOptionRepository:
             return row
 
     async def get(self, massing_option_id: int) -> MassingOption | None:
-        """Return a live (not soft-deleted) massing option, or ``None``."""
         async with self._conn.cursor(row_factory=class_row(MassingOption)) as cur:
             await cur.execute(
                 f"SELECT {_COLUMNS} FROM massing_option WHERE id = %s AND is_deleted = false",
@@ -78,11 +77,6 @@ class MassingOptionRepository:
             return await cur.fetchone()
 
     async def list_for_polygon(self, polygon_id: int) -> list[MassingOption]:
-        """Return all live massing options for a polygon, ordered for stable tree builds.
-
-        Roots first (``parent_id`` NULL), then by ``parent_id``/``position``/``id``
-        so a client can rebuild the massing option tree deterministically.
-        """
         async with self._conn.cursor(row_factory=class_row(MassingOption)) as cur:
             await cur.execute(
                 f"""
@@ -108,13 +102,6 @@ class MassingOptionRepository:
         gfa: float | None | _Unset = UNSET,
         verification_result: str | None | _Unset = UNSET,
     ) -> MassingOption | None:
-        """Partially update a live massing option.
-
-        Only the arguments you pass are written; omit one to leave that column
-        untouched. ``parent_id=None`` is meaningful — it re-roots the massing option;
-        passing ``None`` for a ``jsonb`` column clears it.
-        Returns the updated row, or ``None`` if no live massing option matched.
-        """
         assignments: list[sql.Composable] = []
         params: dict[str, object] = {"id": massing_option_id}
 
