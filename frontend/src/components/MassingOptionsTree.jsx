@@ -12,7 +12,14 @@ function buildTree(massingOptions) {
   return roots;
 }
 
-export default function MassingOptionsTree({ massingOptions, polygonId, onChanged, onOptionDirtyChange }) {
+export default function MassingOptionsTree({
+  massingOptions,
+  polygonId,
+  onChanged,
+  onOptionDirtyChange,
+  activeOptionId,
+  onActivate,
+}) {
   const roots = buildTree(massingOptions);
   if (roots.length === 0) {
     return <p style={{ fontSize: "0.8rem", color: "#888", margin: "0.5rem 0" }}>No massing options yet.</p>;
@@ -26,6 +33,8 @@ export default function MassingOptionsTree({ massingOptions, polygonId, onChange
           polygonId={polygonId}
           onChanged={onChanged}
           onOptionDirtyChange={onOptionDirtyChange}
+          activeOptionId={activeOptionId}
+          onActivate={onActivate}
         />
       ))}
     </ul>

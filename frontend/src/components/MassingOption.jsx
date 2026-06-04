@@ -70,7 +70,15 @@ function StatusBadge({ status }) {
 }
 
 // One massing option in the tree: a collapsed header, plus settings/actions/sub-options when expanded.
-export default function MassingOption({ node, polygonId, onChanged, onOptionDirtyChange, depth = 1 }) {
+export default function MassingOption({
+  node,
+  polygonId,
+  onChanged,
+  onOptionDirtyChange,
+  activeOptionId,
+  onActivate,
+  depth = 1,
+}) {
   const notify = useToast();
   const [name, setName] = useState(node.name ?? "");
   // String-valued inputs for each constraint, seeded from the saved row.
@@ -79,6 +87,9 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
   );
   const setConstraint = (key, value) => setConstraintInputs((prev) => ({ ...prev, [key]: value }));
   const [status, setStatus] = useState(node.verification_result ?? null);
+  // The last Generate preview (footprint + metrics + reasons); null until generated.
+  // Not persisted — it's a what-if over the current, possibly-unsaved constraints.
+  const [result, setResult] = useState(null);
   // Which action is in flight, so its button can show a spinner; null when idle.
   const [pending, setPending] = useState(null);
   const busy = pending !== null;
@@ -90,6 +101,8 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const hasChildren = node.children.length > 0;
+  // This option's footprint is the one currently drawn on the canvas.
+  const isActive = node.id === activeOptionId;
   // At the deepest level, adding another sub-option would exceed MAX_DEPTH.
   const atMaxDepth = depth >= MAX_DEPTH;
   // Unsaved edits to this option's own fields (name / constraints) block adding children.
@@ -114,22 +127,65 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
     }
   };
 
+  // Collect the editor's numeric constraints (skipping blanks) for save/generate.
+  const collectConstraints = () => {
+    const constraints = {};
+    for (const { key } of CONSTRAINT_FIELDS) {
+      const raw = constraintInputs[key];
+      if (raw !== "") constraints[key] = Number(raw);
+    }
+    return constraints;
+  };
+
   const save = () =>
     run("save", async () => {
-      const constraints = {};
-      for (const { key } of CONSTRAINT_FIELDS) {
-        const raw = constraintInputs[key];
-        if (raw !== "") constraints[key] = Number(raw);
+      const payload = { name: name.trim() || null, constraints: collectConstraints() };
+      // Persist the last preview's metrics too, so they survive reloads and a
+      // branched child can inherit them from the saved row.
+      if (result) {
+        payload.floor_count = result.floor_count;
+        payload.footprint_area = result.footprint_area;
+        payload.gfa = result.gfa;
+        payload.verification_result = result.verification_result;
       }
-      await updateMassingOption(node.id, { name: name.trim() || null, constraints });
+      await updateMassingOption(node.id, payload);
       await onChanged();
     });
 
+  // The 3D mass: the footprint + its building height (floors × floor-to-floor).
+  const massingOf = (r) => {
+    if (!r?.footprint) return { footprint: null, height: null };
+    const floorHeight = Number(constraintInputs.floor_to_floor_m) || 0;
+    const height = r.floor_count && floorHeight ? r.floor_count * floorHeight : null;
+    return { footprint: r.footprint, height };
+  };
+
+  // Generate is a preview: it masses with the *current* (possibly unsaved) constraints
+  // and shows the result here + on the canvas, without persisting anything.
   const generate = () =>
-    run("generate", async () => setStatus((await generateMassingOption(node.id)).verification_result));
+    run("generate", async () => {
+      const res = await generateMassingOption(node.id, collectConstraints());
+      setResult(res);
+      setStatus(res.verification_result);
+      onActivate?.(node.id, massingOf(res));
+    });
+
+  // Show this option on the canvas with its latest previewed footprint (if any).
+  const activate = () => onActivate?.(node.id, massingOf(result));
   const addChild = () =>
     run("add", async () => {
-      await createMassingOption({ polygon_id: polygonId, parent_id: node.id });
+      // Pre-fill the child with this option's current state so it branches as a
+      // copy; metrics come from the latest preview if there is one, else the saved row.
+      const metrics = result ?? node;
+      await createMassingOption({
+        polygon_id: polygonId,
+        parent_id: node.id,
+        constraints: collectConstraints(),
+        floor_count: metrics.floor_count ?? null,
+        footprint_area: metrics.footprint_area ?? null,
+        gfa: metrics.gfa ?? null,
+        verification_result: metrics.verification_result ?? null,
+      });
       setExpanded(true);
       await onChanged();
     });
@@ -146,14 +202,17 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
         style={{
           padding: "0.4rem 0.5rem",
           marginTop: "0.4rem",
-          border: `1px solid ${colors.border}`,
+          border: `1px solid ${isActive ? colors.selectedBorder : colors.border}`,
           borderRadius: 6,
-          background: "#fff",
+          background: isActive ? colors.selected : "#fff",
         }}
       >
-        {/* Block 1 — title, child count, add-child. Always visible; click to open the massing option. */}
+        {/* Block 1 — title, child count, add-child. Always visible; click to open and show on canvas. */}
         <div
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => {
+            setExpanded((v) => !v);
+            activate();
+          }}
           role="button"
           tabIndex={0}
           aria-expanded={expanded}
@@ -161,6 +220,7 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               setExpanded((v) => !v);
+              activate();
             }
           }}
           style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap", cursor: "pointer" }}
@@ -272,19 +332,31 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
               </div>
             </div>
 
-            {/* Block 3 — metrics; read-only, counted during generation. */}
+            {/* Block 3 — metrics; from the last preview if any, else the saved/inherited row. */}
             <div style={sectionPanel}>
-              <span style={label}>Metrics</span>
+              <span style={label}>Metrics{result ? " (preview)" : ""}</span>
               <div style={{ ...settingsSection, marginTop: 0 }}>
-                {METRIC_FIELDS.map(({ key, label: fieldLabel }) => (
-                  <span key={key} style={inlineFieldLabel}>
-                    {fieldLabel}
-                    <strong style={{ color: node[key] == null ? "#aaa" : "#222", fontWeight: 600 }}>
-                      {node[key] ?? "—"}
-                    </strong>
-                  </span>
-                ))}
+                {METRIC_FIELDS.map(({ key, label: fieldLabel }) => {
+                  const value = (result ?? node)[key] ?? null;
+                  return (
+                    <span key={key} style={inlineFieldLabel}>
+                      {fieldLabel}
+                      <strong style={{ color: value == null ? "#aaa" : "#222", fontWeight: 600 }}>
+                        {value ?? "—"}
+                      </strong>
+                    </span>
+                  );
+                })}
               </div>
+              {result?.reasons?.length > 0 && (
+                <ul style={{ margin: "0.4rem 0 0", paddingLeft: "1rem" }}>
+                  {result.reasons.map((r) => (
+                    <li key={r.name} style={{ fontSize: "0.75rem", color: colors.muted }}>
+                      {r.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {/* Block 4 — actions. */}
@@ -341,6 +413,8 @@ export default function MassingOption({ node, polygonId, onChanged, onOptionDirt
               polygonId={polygonId}
               onChanged={onChanged}
               onOptionDirtyChange={onOptionDirtyChange}
+              activeOptionId={activeOptionId}
+              onActivate={onActivate}
               depth={depth + 1}
             />
           ))}
