@@ -199,11 +199,15 @@ First, I would improve the preview workflow. In the current prototype, the 3D sc
 
 I would keep the backend as the source of truth for saved options, final geometry, metrics, and validation reasons. At the same time, the frontend could show a lightweight live preview while the user edits constraints, for example by updating height, floor count, or an approximate massing immediately. The final result would still be confirmed by backend generation.
 
-Second, I would add side-by-side option comparison. Comparing alternatives is one of the core workflows of the case study, and the current UI makes the user inspect options one at a time. I would split the screen into two views, each showing a selected option with its geometry and metrics. This would make differences in footprint, height, floor count, GFA, and validation reasons much easier to understand.
+Second, I would add a small 2D site editor. Right now, the user enters the site either as a JSON coordinate array or point by point. This works for testing, but it is slow and not very intuitive.
 
-Third, I would expose tree cleanup in the UI. The backend already supports changing an option’s parent, so I would add a clear move/re-parent action. The computed massing result of a saved option should remain immutable, but its position in the decision tree can change. This lets the user clean up the hierarchy without rewriting the option’s actual design record.
+A 2D editor would let the user draw a polygon visually, move points, see edge lengths, and then convert the result into the coordinate array used by the main tool. I would treat this as a high-ROI feature: it does not change the backend model, but it would make site creation much easier and reduce input mistakes.
 
-Fourth, I would improve the 3D height visualization. The current view shows each option as one solid extruded mass. I would show the building floor by floor, so the user can better understand how the computed floor count relates to the total height.
+Third, I would add side-by-side option comparison. Comparing alternatives is one of the core workflows of the case study, and the current UI makes the user inspect options one at a time. I would split the screen into two views, each showing a selected option with its geometry and metrics. This would make differences in footprint, height, floor count, GFA, and validation reasons much easier to understand.
+
+Fourth, I would expose tree cleanup in the UI. The backend already supports changing an option’s parent, so I would add a clear move/re-parent action. The computed massing result of a saved option should remain immutable, but its position in the decision tree can change. This lets the user clean up the hierarchy without rewriting the option’s actual design record.
+
+Fifth, I would improve the 3D height visualization. The current view shows each option as one solid extruded mass. I would show the building floor by floor, so the user can better understand how the computed floor count relates to the total height.
 
 ### Later roadmap
 
@@ -215,12 +219,16 @@ Footprint generation should also become more design-aware. Today, when the full 
 
 I would also make the height model more realistic. The prototype currently assumes one uniform floor-to-floor value. Real projects may have a taller ground floor, podium levels, roof structures, attic space, foundation height, or technical floors. Supporting these separately would make the massing result closer to how building height is evaluated in practice.
 
-Longer term, I would treat scale as a collaboration and history problem, not only a geometry-performance problem. In a real design workflow, several people may work on the same project: creating options, branching alternatives, reviewing results, deleting or restoring work, and comparing decisions over time.
+Longer term, I would turn the prototype into a multi-user system. This would require RBAC and project-level permissions, so users only see and edit projects they have access to.
 
-That would require project-level permissions, option ownership, audit history, restore flows for soft-deleted data, and clear conflict handling for concurrent edits. Soft delete should also be completed with a retention policy and eventual hard deletion after a recovery window.
+I would also add collaboration workflows: inviting users to edit a project, sharing read-only views, and tracking ownership of sites and options.
+
+I would add an audit log for important actions such as creating, saving, moving, deleting options, and changing access. This would make the project history reliable for team work.
 
 If option trees become large or heavily edited, I would revisit the persistence model. A simple `parent_id` is enough for the prototype, but PostgreSQL `ltree` or a closure table would make subtree reads, moves, deletes, and re-parenting easier to scale.
 
-Once the constraint model is richer, I would explore more intelligent footprint generation. For complex sites, the system could generate candidate building shapes from simple primitives or search for a good balance between several buildings on the same site. Search-based approaches, such as an evolutionary algorithm, would only be useful once the system has a clear scoring model for what “better” means: target GFA, compactness, usable floor-plate width, frontage, separation distances, and constraint compliance.
+Once the constraint model is richer, I would explore more intelligent footprint generation. For complex sites, the system could generate candidate building shapes from simple primitives or search for a good balance between several buildings on the same site.
+
+At that point, more advanced optimization techniques could become useful, including evolutionary algorithms or ML-assisted layout exploration. These would only make sense once the system has a clear scoring model for what “better” means: target GFA, compactness, usable floor-plate width, frontage, separation distances, and constraint compliance.
 
 For heavier geometry workflows, I would move long-running computations to background jobs, cache generated results, and store progress separately. But I would expect collaboration, history, and data ownership to become scaling concerns before raw 3D rendering does.
